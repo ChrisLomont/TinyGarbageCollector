@@ -23,6 +23,10 @@ SOFTWARE.
 
  */
 
+/* Release v0.1 - Nov 2023
+ *
+ */
+
 // Chris Lomont
 // Nov 2023
 // Garbage collected (ref counted) mem allocator
@@ -95,6 +99,10 @@ namespace Lomont::Languages {
 
 
 	public:
+		/**
+		 * \brief Create a memory allocator that holds a fixed block of the requested size
+		 * \param sizeInBytes The number of bytes to manage.
+		 */
 		Allocator(Size sizeInBytes)
 		{
 			memory.resize(sizeInBytes);
@@ -110,6 +118,11 @@ namespace Lomont::Languages {
 			AddToFreeList(root);
 		}
 
+		/**
+		 * \brief Allocate memory
+		 * \param byteSizeRequested the number of bytes requested
+		 * \return a pointer to the memory, or nullptr if not available.
+		 */
 		void* AllocPtr(Size byteSizeRequested)
 		{
 			auto bytesNeeded = RoundUp(byteSizeRequested + sizeof(Size));       // used chunk size
@@ -148,6 +161,10 @@ namespace Lomont::Languages {
 			return ((uint8_t*)used) + userDeltaBytes; // skip header
 		}
 
+		/**
+		 * \brief free the pointer, back into the Allocator pool
+		 * \param userData a pointer to the block to free
+		 */
 		void FreePtr(void* userData)
 		{
 			assert(userData != InvalidAlloc);
@@ -181,6 +198,10 @@ namespace Lomont::Languages {
 		// , collections{ 0 }, swaps{ 0 }, bytesMoved{ 0 };
 		uint32_t allocations{ 0 }, frees{ 0 }, fails{ 0 };
 
+		/**
+		 * \brief The size of the managed memory
+		 * \return The size of the managed memory
+		 */
 		[[nodiscard]] Size size() const { return static_cast<Size>(memory.size()); }
 
 
@@ -516,6 +537,10 @@ namespace Lomont::Languages {
 #pragma pack(pop)
 
 	public:
+		/**
+		 * \brief Create a garbage collector
+		 * \param bytesUsed the bytes to manage
+		 */
 		GarbageCollector(uint32_t bytesUsed) : Allocator(bytesUsed)
 		{
 			refs.resize(100); // max for now?
@@ -526,6 +551,11 @@ namespace Lomont::Languages {
 		// stats
 		uint32_t collections{ 0 }, swaps{ 0 }, bytesMoved{ 0 };
 
+		/**
+		 * \brief Allocate a block and return a Ref. 
+		 * \param requestedByteSize 
+		 * \return a ref with an initial reference count of 1
+		 */
 		Ref AllocRef(uint32_t requestedByteSize)
 		{
 			auto ptr = AllocPtr(requestedByteSize);
@@ -540,7 +570,12 @@ namespace Lomont::Languages {
 			return ref;
 
 		}
-		void FreeRef(Ref& ref)
+
+		/**
+		 * \brief Free a ref, no matter the reference count
+		 * \param ref the reference to free
+		 */
+		void FreeRef(const Ref& ref)
 		{
 			auto& rh = refs[ref];
 			FreePtr(rh.pointer);
@@ -548,10 +583,19 @@ namespace Lomont::Languages {
 			rh.size = 0;
 			rh.refCount = InvalidRef;
 		}
-		void IncrRef(Ref& ref) { refs[ref].refCount++; /* todo - overflow ? */ }
 
-		// return true if item still alive
-		bool DecrRef(Ref& ref)
+		/**
+		 * \brief Increment a reference count
+		 * \param ref the Ref to increment
+		 */
+		void IncrRef(const Ref& ref) { refs[ref].refCount++; /* todo - overflow ? */ }
+
+		/**
+		 * \brief Decrement a reference count. When zero, memory is released
+		 * \param ref the Ref to increment
+		 * \return true if the reference is still alive
+		 */
+		bool DecrRef(const Ref& ref)
 		{
 			auto& rh = refs[ref];
 			if (rh.refCount > 1)
@@ -563,11 +607,17 @@ namespace Lomont::Languages {
 			return false;
 		}
 
+		// get size of the memory from a Ref
 		uint32_t SizeFromRef(const Ref& ref) const { return refs[ref].size; }
+		// get the pointer to underlying memory from a Ref
 		void* PointerFromRef(const Ref& ref) const { return refs[ref].pointer; }
+		// get the current rec count from a Ref
 		uint32_t RefCount(const Ref& ref) const { return refs[ref].refCount; }
 
-		// perform garbage compaction
+		/**
+		 * \brief Perform a memory compaction, which moves all free memory blocks together,
+		 * reclaiming fragmented memory.
+		 */
 		void Compact()
 		{
 			// todo; - how to make work with other interspersed items? cannot? do not?
