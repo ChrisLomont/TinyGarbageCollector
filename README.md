@@ -4,6 +4,7 @@ Chris Lomont 2023
 
 Release v0.1 - Nov 2023
 
+https://github.com/ChrisLomont/TinyGarbageCollector
 
 
 This is a C++20 single header, simple, reference counted, compacting garbage collector I wrote over the weekend for a small embedded user-facing language I'm designing. I decided this was nice enough that I'd post it here.

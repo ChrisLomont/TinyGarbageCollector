@@ -24,7 +24,7 @@ SOFTWARE.
  */
 
 /* Release v0.1 - Nov 2023
- *
+ * https://github.com/ChrisLomont/TinyGarbageCollector
  */
 
 // Chris Lomont
