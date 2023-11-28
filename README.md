@@ -118,7 +118,16 @@ Note: These are not designed to be secure against malicious code (i.e., the `Ref
 ## TODO
 
 1. move all memory used into the user specified block
-2. 
+
+2. add pinned block support
+
+3. improve bin performance: keep sorted in non-increasing order?
+
+4. handle ref count overflow issues
+
+5. better docs and usage and caeats/gotchas
+
+   
 
 
 
