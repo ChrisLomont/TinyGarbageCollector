@@ -48,10 +48,9 @@ void CheckSize(uint32_t requestSize, uint32_t returnedSize)
 
 void CheckBlock(const GC& gc, const GC::Ref & ref, uint32_t requestSize)
 {
-	auto memptr = (uint8_t*)gc.PointerFromRef(ref);
-	auto returnedSize = gc.SizeFromRef(ref);
-	auto refCount = gc.RefCount(ref);
-
+	auto memptr = static_cast<uint8_t*>(gc.PointerFromRef(ref));
+	const auto returnedSize = gc.SizeFromRef(ref);
+	
 	//if (returnedSize != gc.BlockSize(ref))
 	//	throw std::runtime_error("Mismatched mem size");
 
@@ -59,7 +58,7 @@ void CheckBlock(const GC& gc, const GC::Ref & ref, uint32_t requestSize)
 
 
 	// save a byte to check later, tests gc moves
-	if (memptr[0] != (uint8_t)ref)
+	if (memptr[0] != static_cast<uint8_t>(ref))
 		throw runtime_error("memory changed");
 }
 
@@ -74,7 +73,7 @@ void CheckGC()
 	// store the ref, and the size we requested
 	std::vector<std::pair<GC::Ref,uint32_t>> pointers;
 
-	srand(1234);
+	srand(1234); // make reproducible
 	constexpr int memorySize = 100'000;
 	GC gc(memorySize);
 	int pass = 0;
@@ -111,21 +110,20 @@ void CheckGC()
 			}
 			if (!failed)
 			{ // save it
-				auto memptr = (uint8_t*)gc.PointerFromRef(ref);
-				auto returnedSize = gc.SizeFromRef(ref);
-				auto refCount = gc.RefCount(ref);
+				auto memptr = static_cast<uint8_t*>(gc.PointerFromRef(ref));
+				const auto returnedSize = gc.SizeFromRef(ref);				
 
-				pointers.push_back(std::pair(ref,requestSize));
+				pointers.emplace_back(ref,requestSize);
 
 				CheckSize(requestSize,returnedSize);
 
 				// fill with gibberish
-				for (auto i = 0; i < returnedSize; ++i)
-					memptr[i] = (uint8_t)rand();
+				for (auto i = 0u; i < returnedSize; ++i)
+					memptr[i] = static_cast<uint8_t>(rand());
 				
 				// write a known token we can check after any GCs to check memory moved correctly
 				// save a byte to check later, tests gc moves
-				memptr[0] = (uint8_t)ref;
+				memptr[0] = static_cast<uint8_t>(ref);
 			}
 			else
 			{
@@ -134,7 +132,7 @@ void CheckGC()
 				//throw std::runtime_error("gc mem retry failed");
 			}
 		}
-		else if (pointers.size()>0)
+		else if (!pointers.empty())
 		{ // free a chunk, test it on way out
 			const auto i = rand() % pointers.size();
 			auto [ref, requestSize] = pointers[i];
@@ -144,8 +142,7 @@ void CheckGC()
 
 			CheckBlock(gc, ref, requestSize);
 
-			auto refKept = gc.DecrRef(ref);
-			if (refKept)
+			if (gc.DecrRef(ref))
 				throw runtime_error("ref count not 0");
 
 		}
@@ -188,8 +185,6 @@ void CheckMem()
 	{
 		++pass;
 		//allocator.IntegrityCheck();
-
-		// allocator.Dump(cout, " -- ");
 
 		/*
 		 
@@ -238,9 +233,9 @@ void CheckMem()
 				//CheckSize(requestSize, returnedSize);
 
 				// fill with gibberish
-				uint8_t* p = (uint8_t*)ref;
+				uint8_t* p = static_cast<uint8_t*>(ref);
 				for (auto i = 0; i < requestSize; ++i)
-					p[i] = (uint8_t)rand();
+					p[i] = static_cast<uint8_t>(rand());
 
 				// write a known token we can check after any GCs to check memory moved correctly
 				// save a byte to check later, tests gc moves

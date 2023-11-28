@@ -59,15 +59,16 @@ namespace Lomont::Languages {
 			Size size{0};     // size in bytes, including overhead, low bit is isPrevUsed (when bit = 1)
 		public:
 			Size nextOffset{ 0 }, prevOffset{0}; // double linked list if this node free
-			static constexpr Size sizeMask = ((Size)(-1)) ^ 1;
-			Size GetSize() { return size & sizeMask; }
-			void SetSize(Size size)
+			static constexpr Size sizeMask = static_cast<Size>(-1) ^ 1;
+			[[nodiscard]] Size GetSize() const { return size & sizeMask; }
+			void SetSize(const Size newSize)
 			{
-				bool prevUsed = IsPrevUsed();
-				this->size = size;
+				const bool prevUsed = IsPrevUsed();
+				size = newSize;
 				SetPrevUsed(prevUsed);
 			}
-			bool IsPrevUsed() const { return (size & 1) == 1; }
+
+			[[nodiscard]] bool IsPrevUsed() const { return (size & 1) == 1; }
 			void SetPrevUsed(const bool prevUsed)
 			{
 				size &= sizeMask;
@@ -85,7 +86,7 @@ namespace Lomont::Languages {
 
 			FreeChunkBins() { std::fill_n(bins, BIN_INDICES, Allocator::InvalidSize); }
 			// get index where this size lives
-			int GetIndex(Size bytesRequested)
+			static int GetIndex(Size bytesRequested)
 			{
 				if (bytesRequested < 33)
 					return (bytesRequested - 1) / 2;
@@ -136,19 +137,19 @@ namespace Lomont::Languages {
 				return InvalidAlloc;
 			}
 
-			auto size = curFree->GetSize();
+			const auto size = curFree->GetSize();
 			assert(size >= bytesNeeded);
 
 			RemoveFromFreeList(curFree); // remove from current list
 
-			auto splitBlock = size >= minFreeSize + bytesNeeded;
-			Size bytesUsed = splitBlock ? bytesNeeded : size;
+			const auto splitBlock = size >= minFreeSize + bytesNeeded;
+			const Size bytesUsed = splitBlock ? bytesNeeded : size;
 
-			auto used = PlaceChunkRelative(curFree, size - bytesUsed);
+			const auto used = PlaceChunkRelative(curFree, static_cast<int32_t>(size) - bytesUsed);
 			// must write this block before any potential free chunk before it
 			WriteHeaderAndFooter(used, bytesUsed, true);
 
-			AllocationBytesUsed((int)bytesUsed);
+			AllocationBytesUsed(static_cast<int>(bytesUsed));
 
 			if (splitBlock)
 			{
@@ -158,7 +159,7 @@ namespace Lomont::Languages {
 			}
 
 			allocations++;
-			return ((uint8_t*)used) + userDeltaBytes; // skip header
+			return reinterpret_cast<uint8_t*>(used) + userDeltaBytes; // skip header
 		}
 
 		/**
@@ -170,24 +171,19 @@ namespace Lomont::Languages {
 			assert(userData != InvalidAlloc);
 
 
-			auto chunk = (Chunk*)((uint8_t*)userData - userDeltaBytes);
-			auto size = chunk->GetSize();
+			const auto chunk = reinterpret_cast<Chunk*>(static_cast<uint8_t*>(userData) - userDeltaBytes);
+			const auto size = chunk->GetSize();
 			WriteHeaderAndFooter(chunk, size, false);
 			AddToFreeList(chunk);
 
 			AllocationBytesUsed(-(int)size);
 
-			//std::cout << "\n";
-			//Dump(std::cout," ** ");
-
-			// merges?
+			// merges
 			if (!IsNextUsed(chunk))
 				MergeSecondIntoFirst(chunk, NextChunk(chunk));
-			//Dump(std::cout, " ** ");
 
 			if (!chunk->IsPrevUsed() && OffsetOf(chunk) != 0)
 				MergeSecondIntoFirst(PrevChunk(chunk), chunk);
-			//Dump(std::cout, " ** ");
 			++frees;
 		}
 
@@ -210,9 +206,9 @@ namespace Lomont::Languages {
 
 		void AddToFreeList(Chunk* chunk)
 		{
-			auto offset = OffsetOf(chunk);
-			int binIndex = chunkBins.GetIndex(chunk->GetSize());
-			auto listIndex = chunkBins.bins[binIndex];
+			const auto offset = OffsetOf(chunk);
+			const int binIndex = FreeChunkBins::GetIndex(chunk->GetSize());
+			const auto listIndex = chunkBins.bins[binIndex];
 
 			if (listIndex == InvalidSize)
 			{ // single node
@@ -221,8 +217,8 @@ namespace Lomont::Languages {
 			}
 			else
 			{ // link in 			
-				auto listNode = GetChunkAbsolute(listIndex);
-				auto nextNode = GetChunkAbsolute(listNode->nextOffset);
+				const auto listNode = GetChunkAbsolute(listIndex);
+				const auto nextNode = GetChunkAbsolute(listNode->nextOffset);
 				chunk->prevOffset = listIndex;
 				chunk->nextOffset = listNode->nextOffset;
 				nextNode->prevOffset = offset;
@@ -232,8 +228,8 @@ namespace Lomont::Languages {
 		// remove chunk, leave chunk offsets to next, prev unchanged
 		void RemoveFromFreeList(Chunk* chunk)
 		{
-			auto offset = OffsetOf(chunk);
-			int binIndex = chunkBins.GetIndex(chunk->GetSize());
+			const auto offset = OffsetOf(chunk);
+			const int binIndex = FreeChunkBins::GetIndex(chunk->GetSize());
 			if (chunkBins.bins[binIndex] == offset)
 			{ // must deal with it
 				chunkBins.bins[binIndex] = chunk->nextOffset == offset ? InvalidSize : chunk->nextOffset;
@@ -247,15 +243,15 @@ namespace Lomont::Languages {
 		// get the first free one with the requested size
 		Chunk* GetFreeOfSize(Size bytesRequested)
 		{
-			int binIndex = chunkBins.GetIndex(bytesRequested);
+			int binIndex = FreeChunkBins::GetIndex(bytesRequested);
 
 			while (binIndex < BIN_INDICES)
 			{
-				auto offset = chunkBins.bins[binIndex];
+				const auto offset = chunkBins.bins[binIndex];
 				if (offset != InvalidSize)
 				{ // todo - keep bins sorted? check size? then no need to loop here
 					auto cur = GetChunkAbsolute(offset);
-					auto start = cur;
+					const auto start = cur;
 					do {
 						if (cur->GetSize() >= bytesRequested)
 							return cur;
@@ -267,15 +263,14 @@ namespace Lomont::Languages {
 			return nullptr; // none
 		}
 
-		static constexpr Size InvalidSize{(Size)(-1)};
+		static constexpr Size InvalidSize{static_cast<Size>(-1)};
 
 		// write header and possible footer and any following IsPrevUsed flag
 		void WriteHeaderAndFooter(Chunk* chunk, Size size, bool isUsed)
 		{
 			assert(size >= sizeof(Size));
 			chunk->SetSize(size);
-			auto next = NextChunk(chunk);
-			if (next)
+			if (const auto next = NextChunk(chunk))
 				next->SetPrevUsed(isUsed);
 			else
 				finalPrevIsUsed = isUsed;
@@ -283,7 +278,7 @@ namespace Lomont::Languages {
 			if (!isUsed)
 			{
 				// footer
-				auto dst = reinterpret_cast<Size*>((uint8_t*)chunk + chunk->GetSize() - sizeof(Size));
+				const auto dst = reinterpret_cast<Size*>(reinterpret_cast<uint8_t*>(chunk) + chunk->GetSize() - sizeof(Size));
 				*dst = chunk->GetSize();
 			}
 		}
@@ -291,22 +286,22 @@ namespace Lomont::Languages {
 		bool finalPrevIsUsed{ false };
 
 		// get offset from base to chunk
-		Size OffsetOf(Chunk* chunk) { return ((uint8_t*)chunk) - Root(); }
+		Size OffsetOf(Chunk* chunk) { return reinterpret_cast<uint8_t*>(chunk) - Root(); }
 
 		// get chunk given offset from base
-		Chunk* GetChunkAbsolute(Size offsetFromBase) { return (Chunk*)(Root() + offsetFromBase); }
+		Chunk* GetChunkAbsolute(Size offsetFromBase) { return reinterpret_cast<Chunk*>(Root() + offsetFromBase); }
 
 		// place a chunk relative to current
-		Chunk* PlaceChunkRelative(void* ptr, int32_t byteOffset) { return (Chunk*)(((uint8_t*)ptr) + byteOffset); }
+		static Chunk* PlaceChunkRelative(void* ptr, int32_t byteOffset) { return reinterpret_cast<Chunk*>(static_cast<uint8_t*>(ptr) + byteOffset); }
 
 		// next physical chunk, nullptr if none
-		Chunk* NextChunk(Chunk* chunk)
+		Chunk* NextChunk(Chunk* chunk) const
 		{
 			if (chunk == nullptr) return nullptr;
-			uint8_t* next = (uint8_t*)chunk + chunk->GetSize();
+			uint8_t* next = reinterpret_cast<uint8_t*>(chunk) + chunk->GetSize();
 			if (next >= memory.data() + memory.size())
 				return nullptr;
-			return (Chunk*)next;
+			return reinterpret_cast<Chunk*>(next);
 		}
 
 		// only valid on chunk with prev free
@@ -316,11 +311,11 @@ namespace Lomont::Languages {
 		// else nullptr
 		Chunk* PrevChunk(Chunk* cur)
 		{
-			auto offset = OffsetOf(cur);
+			const auto offset = OffsetOf(cur);
 			if (cur->IsPrevUsed() || offset == 0)
 				return nullptr;
-			auto prevSize = PrevSize(cur);
-			return PlaceChunkRelative(cur, -prevSize);
+			const auto prevSize = PrevSize(cur);
+			return PlaceChunkRelative(cur, -static_cast<int32_t>(prevSize));
 		}
 
 		void MergeSecondIntoFirst(Chunk* prev, Chunk* chunk)
@@ -334,12 +329,11 @@ namespace Lomont::Languages {
 		}
 		// see if next us used.
 		// if last chunk possible, return true to mark used
-		bool IsNextUsed(Chunk* chunk)
+		bool IsNextUsed(Chunk* chunk) const
 		{
-			auto next1 = NextChunk(chunk);
-			if (next1)
+			if (const auto next1 = NextChunk(chunk))
 			{
-				auto next2 = NextChunk(next1);
+				const auto next2 = NextChunk(next1);
 				return next2 ? next2->IsPrevUsed() : finalPrevIsUsed;
 			}
 			return true;
@@ -349,7 +343,7 @@ namespace Lomont::Languages {
 
 		void AllocationBytesUsed(int bytesUsed)
 		{
-			auto s = bytesUsed > 0 ? 1 : -1;
+			const auto s = bytesUsed > 0 ? 1 : -1;
 			freeBlocks -= s;
 			usedBlocks += s;
 			freeMem -= bytesUsed;
@@ -363,31 +357,31 @@ namespace Lomont::Languages {
 		{
 			if (chunk->GetSize() < 16)
 				throw std::runtime_error("Size too small");
-			auto next = NextChunk(chunk);
+			const auto next = NextChunk(chunk);
 			if (next && !next->IsPrevUsed())
 			{
 				if (chunk->nextOffset == InvalidSize ||
 					chunk->prevOffset == InvalidSize)
 					throw std::runtime_error("Bad free pointers");
 
-				auto offset = OffsetOf(chunk);
+				const auto offset = OffsetOf(chunk);
 				if (
 					GetChunkAbsolute(chunk->nextOffset)->prevOffset != offset ||
 					GetChunkAbsolute(chunk->prevOffset)->nextOffset != offset
 					)
-					throw std::runtime_error("Bad backlinks");
+					throw std::runtime_error("Bad back links");
 			}
 		}
 
 		// ensure this chunk in correct bin
 		// return binLength
-		uint32_t CheckInBin(Chunk* chunk)
+		uint32_t CheckInBin(const Chunk* chunk)
 		{
-			auto binindex = chunkBins.GetIndex(chunk->GetSize());
-			auto startOffset = chunkBins.bins[binindex];
+			const auto binindex = FreeChunkBins::GetIndex(chunk->GetSize());
+			const auto startOffset = chunkBins.bins[binindex];
 			if (startOffset == InvalidSize)
 				throw std::runtime_error("chunk missing in bin");
-			auto start = GetChunkAbsolute(startOffset);
+			const auto start = GetChunkAbsolute(startOffset);
 			auto cur = start;
 			uint32_t count = 0;
 			bool found = false;
@@ -410,11 +404,11 @@ namespace Lomont::Languages {
 			uint32_t freeCountA = 0, freeMemA = 0;
 			uint32_t usedCountA = 0, usedMemA = 0;
 			uint32_t totalMemUsedA = 0;
-			Chunk* s = GetChunkAbsolute(0), * prev;
+			Chunk* s = GetChunkAbsolute(0), * prev = nullptr;
 			while (s != nullptr)
 			{
 				CheckChunk(s);
-				auto nextChunk = NextChunk(s);
+				const auto nextChunk = NextChunk(s);
 				prev = s;
 				assert(s->GetSize() >= sizeof(Size));
 				if (nextChunk)
@@ -426,8 +420,8 @@ namespace Lomont::Languages {
 						freeCountA++;
 						freeMemA += s->GetSize();
 
-						auto prevSize = PrevSize(nextChunk);
-						auto curSize = s->GetSize();
+						const auto prevSize = PrevSize(nextChunk);
+						const auto curSize = s->GetSize();
 						if (prevSize != curSize)
 						{
 							throw std::runtime_error("Free has mismatched sizes");
@@ -546,22 +540,22 @@ namespace Lomont::Languages {
 			refs.resize(100); // max for now?
 		}
 
-		constexpr static Ref InvalidRef{(Ref)(-1)};
+		constexpr static Ref InvalidRef{static_cast<Ref>(-1)};
 
 		// stats
 		uint32_t collections{ 0 }, swaps{ 0 }, bytesMoved{ 0 };
 
 		/**
 		 * \brief Allocate a block and return a Ref. 
-		 * \param requestedByteSize 
+		 * \param requestedByteSize the size to allocate in bytes
 		 * \return a ref with an initial reference count of 1
 		 */
 		Ref AllocRef(uint32_t requestedByteSize)
 		{
-			auto ptr = AllocPtr(requestedByteSize);
+			const auto ptr = AllocPtr(requestedByteSize);
 			if (ptr == InvalidAlloc)
 				return InvalidRef;
-			Ref ref = GetFreeRef(ptr, requestedByteSize);
+			const Ref ref = GetFreeRef(ptr, requestedByteSize);
 			if (ref == InvalidRef)
 			{
 				FreePtr(ptr);
@@ -608,11 +602,11 @@ namespace Lomont::Languages {
 		}
 
 		// get size of the memory from a Ref
-		uint32_t SizeFromRef(const Ref& ref) const { return refs[ref].size; }
+		[[nodiscard]] uint32_t SizeFromRef(const Ref& ref) const { return refs[ref].size; }
 		// get the pointer to underlying memory from a Ref
-		void* PointerFromRef(const Ref& ref) const { return refs[ref].pointer; }
+		[[nodiscard]] void* PointerFromRef(const Ref& ref) const { return refs[ref].pointer; }
 		// get the current rec count from a Ref
-		uint32_t RefCount(const Ref& ref) const { return refs[ref].refCount; }
+		[[nodiscard]] uint32_t RefCount(const Ref& ref) const { return refs[ref].refCount; }
 
 		/**
 		 * \brief Perform a memory compaction, which moves all free memory blocks together,
@@ -632,7 +626,7 @@ namespace Lomont::Languages {
 					// TODO?: Need to ensure mem-alloc has at least this much slack space - does currently
 
 					// store data
-					p = (uint32_t*)refs[i].pointer;
+					p = static_cast<uint32_t*>(refs[i].pointer);
 					backing[i] = *p;
 					*p = i;
 				}
@@ -653,17 +647,17 @@ namespace Lomont::Languages {
 
 			// 3. walk nodes in Next order. Any used, move to lower addresses
 			cur = GetChunkAbsolute(0);
-			uint8_t* nextWrite = (uint8_t*)cur; // top of stack
+			auto nextWrite = reinterpret_cast<uint8_t*>(cur); // top of stack
 			uint32_t usedSize = 0;
 			do { // move used to lowest addresses
-				auto nxt = NextChunk(cur);
+				const auto nxt = NextChunk(cur);
 				if (IsSelfUsed(cur))
 				{
-					auto size = cur->GetSize();
+					const auto size = cur->GetSize();
 					usedSize += size;
-					if (cur != (void*)nextWrite)
+					if (cur != static_cast<void*>(nextWrite))
 						memmove(nextWrite, cur, size);
-					WriteHeaderAndFooter((Chunk*)nextWrite, size, true);
+					WriteHeaderAndFooter(reinterpret_cast<Chunk*>(nextWrite), size, true);
 					nextWrite += size;
 
 					bytesMoved += size;
@@ -673,15 +667,15 @@ namespace Lomont::Languages {
 				cur = nxt;
 			} while (cur != nullptr);
 
-			// 4. one (posssible) final free node, add to bins
-			Size freeSize = size() - usedSize;
+			// 4. one (possible) final free node, add to bins
+			const Size freeSize = size() - usedSize;
 			Chunk* freeChunk = nullptr;
 			freeMem = freeSize;
 			if (freeSize > 0)
 			{
 				freeBlocks++;
 				assert(freeSize >= sizeof(Chunk) + sizeof(Size)); // min free size?
-				freeChunk = (Chunk*)nextWrite;
+				freeChunk = reinterpret_cast<Chunk*>(nextWrite);
 				WriteHeaderAndFooter(freeChunk, freeSize, false);
 				freeChunk->SetPrevUsed(true);
 				AddToFreeList(freeChunk);
@@ -702,7 +696,7 @@ namespace Lomont::Languages {
 				{
 					p = reinterpret_cast<uint32_t*>(cur);
 					p++; // skip front of Chunk data
-					auto index = *p;
+					const auto index = *p;
 					*p = backing[index];
 					refs[index].pointer = p;
 				}
@@ -713,24 +707,23 @@ namespace Lomont::Languages {
 		}
 
 	private:
-		bool IsSelfUsed(Chunk* chunk)
+		bool IsSelfUsed(Chunk* chunk) const
 		{
 			assert(chunk != nullptr);
-			auto next = NextChunk(chunk);
-			if (next) return next->IsPrevUsed();
+			if (const auto next = NextChunk(chunk)) return next->IsPrevUsed();
 			return finalPrevIsUsed;
 		}
 
 		void MoveUsedUp(Chunk* freeChunk, Chunk* usedChunk)
 		{
-			auto usedSize = usedChunk->GetSize();
-			auto freeSize = freeChunk->GetSize();
+			const auto usedSize = usedChunk->GetSize();
+			const auto freeSize = freeChunk->GetSize();
 
 			memmove(freeChunk, usedChunk, usedSize);
 			usedChunk = freeChunk; // set addresses
 
 			// PlaceChunkRelative(void* ptr, int32_t byteOffset)
-			Chunk* newFreeChunk = PlaceChunkRelative(freeChunk, (int32_t)usedSize);
+			Chunk* newFreeChunk = PlaceChunkRelative(freeChunk, static_cast<int32_t>(usedSize));
 
 			WriteHeaderAndFooter(usedChunk, usedSize, true);
 			WriteHeaderAndFooter(newFreeChunk, freeSize, false);
@@ -754,7 +747,7 @@ namespace Lomont::Languages {
 			rh.refCount = 1;
 			rh.size = requestedByteSize;
 			refs.push_back(rh);
-			return (Ref)(refs.size() - 1);
+			return static_cast<Ref>(refs.size() - 1);
 		}
 
 		// where we store
