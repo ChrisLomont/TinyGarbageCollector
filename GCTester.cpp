@@ -56,9 +56,11 @@ void CheckBlock(const GC& gc, const GC::Ref & ref, uint32_t requestSize)
 
 	CheckSize(requestSize, returnedSize);
 
-
 	// save a byte to check later, tests gc moves
-	if (memptr[0] != static_cast<uint8_t>(ref))
+	auto token = static_cast<uint8_t>(ref);
+	if (memptr[0] !=  token ||
+		memptr[returnedSize - 1] != token
+		)
 		throw runtime_error("memory changed");
 }
 
@@ -124,6 +126,7 @@ void CheckGC()
 				// write a known token we can check after any GCs to check memory moved correctly
 				// save a byte to check later, tests gc moves
 				memptr[0] = static_cast<uint8_t>(ref);
+				memptr[returnedSize-1] = static_cast<uint8_t>(ref);
 			}
 			else
 			{
